@@ -1,12 +1,13 @@
+# frozen_string_literal: true
+
 module Plugin::Twitter; end
 
-require_relative 'model/stream'
-
-require_relative 'mikutwitter'
-require_relative 'model'
+require_relative 'model/model'
+require_relative 'mikutwitter/mikutwitter'
+require_relative 'oauth/oauth'
 require_relative 'service'
 require_relative 'settings'
-require_relative 'oauth/oauth'
+require_relative 'retriever'
 
 Plugin.create(:twitter) do
   pt = Plugin::Twitter
@@ -27,22 +28,6 @@ Plugin.create(:twitter) do
 
   favorites = Hash.new{ |h, k| h[k] = Set.new } # {user_id: set(message_id)}
   unfavorites = Hash.new{ |h, k| h[k] = Set.new } # {user_id: set(message_id)}
-
-  # @twitter_configuration = JSON.parse(file_get_contents(File.join(__dir__, 'configuration.json'.freeze)), symbolize_names: true)
-
-  # Twitter API help/configuration.json を叩いて最新情報を取得する
-  # Delayer.new do
-  #   twitter = Enumerator.new{|y|
-  #     Plugin.filtering(:worlds, y)
-  #   }.find{|world|
-  #     world.class.slug == :twitter
-  #   }
-  #   if twitter
-  #     (twitter/:help/:configuration).json(cache: true).next do |configuration|
-  #       @twitter_configuration = configuration.symbolize
-  #     end
-  #   end
-  # end
 
   generate :extract_receive_message, :twitter_appear_tweets do |stream|
     subscribe(:twitter_appear_tweets, &stream.method(:bulk_add))
@@ -106,19 +91,6 @@ Plugin.create(:twitter) do
     appeared = Set.new
     ->(messages) do
       [messages.select{ |message| appeared.add(message.id) unless appeared.include?(message.id) }]
-    end
-  end
-
-  # URL _url_ がTwitterに投稿された時に何文字としてカウントされるかを返す
-  # ==== Args
-  # [url] String URL
-  # ==== Return
-  # Fixnum URLの長さ
-  def posted_url_length(url)
-    if url.start_with?('https://'.freeze)
-      @twitter_configuration[:short_url_length_https] || 23
-    else
-      @twitter_configuration[:short_url_length] || 22
     end
   end
 
@@ -361,11 +333,6 @@ Plugin.create(:twitter) do
     users.each do |user|
       Plugin.call(:follow, service.user_obj, user)
     end
-  end
-
-  # t.coによって短縮されたURLの長さを求める
-  filter_tco_url_length do |url, length|
-    [url, posted_url_length(url)]
   end
 
   # Twitter Entity情報を元にScoreをあれする
@@ -625,10 +592,6 @@ Plugin.create(:twitter) do
     nil
   end
 
-  on_world_create do |world|
-    world.class.slug != :twitter and next
-  end
-
   world_setting :twitter, _('Twitter') do
     ck, cs = UserConfig[:twitter_ck], UserConfig[:twitter_cs]
     token, secret = nil, nil
@@ -677,56 +640,5 @@ Plugin.create(:twitter) do
     link world.user_obj
 
     world
-  end
-
-  Deferred.new do
-    # fetch user timeline
-    collect(:twitter_worlds).each do |world|
-      world.twitter.user_timeline.trap { |err| error err }
-    end
-
-    last_fetch = %i[friends_timeline replies lists]
-      .map { |slug| [slug, Time.now] }.to_h
-
-    while true
-      collect(:twitter_worlds).each do |world|
-        datasource_slug = Stream.friends(world.idname).datasource_slug
-        generate :extract_receive_message, datasource_slug do |stream|
-          period = UserConfig[:twitter_retrieve_period_friends]
-          next if Time.now < last_fetch[:friends_timeline] + period
-
-          world.twitter.friends_timeline
-            .next(&stream.method(:bulk_add))
-            .trap { |err| error err }
-            .next { last_fetch[:friends_timeline] = Time.now }
-        end
-
-        period = UserConfig[:twitter_retrieve_period_replies]
-        if Time.now > last_fetch[:replies] + period
-          world.twitter.replies
-            .trap { |err| error err }
-            .next { last_fetch[:replies] = Time.now }
-        end
-
-        world.twitter.lists.next do |lists|
-          lists.each do |list|
-            datasource_slug = Stream.list(world.idname, list.id).datasource_slug
-            generate :extract_receive_message, datasource_slug do |stream|
-              period = UserConfig[:twitter_retrieve_period_lists]
-              next if Time.now < last_fetch[:lists] + period
-
-              notice "start #{list.id}"
-              world.twitter.list_statuses(id: list.id, public: list.public?)
-                .next(&stream.method(:bulk_add))
-                .trap { |err| error err }
-                .next { notice "end #{list.id}" }
-                .next { last_fetch[:lists] = Time.now }
-            end
-          end
-        end.trap { |err| error err }
-      end
-
-      +(Deferred.sleep 15)
-    end
   end
 end

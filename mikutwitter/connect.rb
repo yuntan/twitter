@@ -54,6 +54,8 @@ module MikuTwitter::Connect
   # ==== Exceptions
   # TimeoutError
   def query_with_oauth!(method, url, options = {})
+    notice url
+
     if [:get, :delete].include? method
       path = url + get_args(options)
       res = access_token.__send__(method, path, options[:head])
@@ -85,5 +87,3 @@ module MikuTwitter::Connect
 end
 
 class MikuTwitter; include MikuTwitter::Connect end
-
-
