@@ -9,6 +9,8 @@ module Plugin::Twitter
     field.string :id, required: true
     field.string :slug, required: true
     alias_method :name, :slug
+    field.string :ck, required: true
+    field.string :cs, required: true
     field.string :token, required: true
     field.string :secret, required: true
 
@@ -19,7 +21,6 @@ module Plugin::Twitter
 
     def twitter
       @twitter ||= MikuTwitter.new.tap do |ﾋｳｨｯﾋﾋｰ|
-        ck, cs = Plugin.filtering(:twitter_default_api_keys, nil, nil)
         ﾋｳｨｯﾋﾋｰ.consumer_key = ck
         ﾋｳｨｯﾋﾋｰ.consumer_secret = cs
         ﾋｳｨｯﾋﾋｰ.a_token = token
@@ -222,6 +223,8 @@ module Plugin::Twitter
 
     def user_data_received(user)
       self[:user] = user
+      self.id = user.id
+      self.slug = "#{id}@twitter.com"
       Plugin.call(:world_modify, self)
     end
 

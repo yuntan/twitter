@@ -1,15 +1,13 @@
-# -*- coding: utf-8 -*-
-require 'json'
-require 'twitter-text'
-
 module Plugin::Twitter; end
 
-require_relative 'builder'
 require_relative 'mikutwitter'
 require_relative 'model'
 require_relative 'service'
+require_relative 'settings'
+require_relative 'oauth/oauth'
 
 Plugin.create(:twitter) do
+  pt = Plugin::Twitter
 
   defevent :favorite,
            priority: :ui_favorited,
@@ -591,17 +589,52 @@ Plugin.create(:twitter) do
     nil
   end
 
-  world_setting(:twitter, _('Twitter')) do
-    ck, cs = Plugin.filtering(:twitter_default_api_keys, nil, nil)
-    builder = Plugin::Twitter::Builder.new(ck, cs)
-    label _("Webページにアクセスして表示された番号を、「トークン」に入力して、次へボタンを押してください。")
-    link builder.authorize_url
-    input "トークン", :token
-    result = await_input
+  world_setting :twitter, _('Twitter') do
+    ck, cs = UserConfig[:twitter_ck], UserConfig[:twitter_cs]
+    token, secret = nil, nil
 
-    world = await builder.build(result[:token])
+    while true
+      if UserConfig[:twitter_use_xauth]
+        xauth = pt::XAuth.new ck, cs
+
+        input _('ユーザー名'), :username
+        inputpass _('パスワード'), :password
+        result = await_input
+
+        token, secret = await(xauth.authorize(result[:username],
+                                  result[:password]).trap do |err|
+          error err
+          label _("認証に失敗しました。")
+          label err.to_s
+          [nil, nil]
+        end)
+        token and break
+      else
+        oauth = pt::OAuth.new ck, cs
+        # HTML escape
+        url = oauth.authorize_url.gsub '&', '&amp;'
+        text = _('認証ページにアクセスして、表示されたPINを貼り付け、「進む」ボタンを押してください。')
+              .sub s, "<a href=\"#{url}\">#{s}</a>"
+
+        markup text
+        input _('PIN'), :pin
+        result = await_input
+
+        token, secret = await(oauth.authorize(result[:pin]).trap do |err|
+          error err
+          label _("認証に失敗しました。")
+          label err.to_s
+          [nil, nil]
+        end)
+        token and break
+      end
+    end
+
+    world = pt::World.new ck: ck, cs: cs, token: token, secret: secret
+
     label _("このアカウントでログインしますか？")
     link world.user_obj
+
     world
   end
 end
