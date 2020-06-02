@@ -93,7 +93,9 @@ class Plugin::Twitter::Message < Diva::Model
     super(value)
     self[:replyto].add_child(self) if self[:replyto].is_a?(Plugin::Twitter::Message)
     self[:retweet].add_child(self) if self[:retweet].is_a?(Plugin::Twitter::Message)
-    Plugin::Twitter::Message.appear(self)
+    # Plugin::Twitter::Message.appear(self)
+
+    Plugin.call(:twitter_appear_tweets, [self])
   end
 
   # 投稿主のidnameを返す

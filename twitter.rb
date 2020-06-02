@@ -1,5 +1,7 @@
 module Plugin::Twitter; end
 
+require_relative 'model/stream'
+
 require_relative 'mikutwitter'
 require_relative 'model'
 require_relative 'service'
@@ -9,6 +11,10 @@ require_relative 'oauth/oauth'
 Plugin.create(:twitter) do
   pt = Plugin::Twitter
 
+  defevent :twitter_worlds, prototype: [Pluggaloid::COLLECT]
+
+  defevent :twitter_appear_tweets, prototype: [Pluggaloid::STREAM]
+
   defevent :favorite,
            priority: :ui_favorited,
            prototype: [Diva::Model, Plugin::Twitter::User, Plugin::Twitter::Message]
@@ -17,23 +23,59 @@ Plugin.create(:twitter) do
            priority: :ui_favorited,
            prototype: [Diva::Model, Plugin::Twitter::User, Plugin::Twitter::Message]
 
+  defactivity :twitter, _('Twitter')
+
   favorites = Hash.new{ |h, k| h[k] = Set.new } # {user_id: set(message_id)}
   unfavorites = Hash.new{ |h, k| h[k] = Set.new } # {user_id: set(message_id)}
 
-  @twitter_configuration = JSON.parse(file_get_contents(File.join(__dir__, 'configuration.json'.freeze)), symbolize_names: true)
+  # @twitter_configuration = JSON.parse(file_get_contents(File.join(__dir__, 'configuration.json'.freeze)), symbolize_names: true)
 
   # Twitter API help/configuration.json を叩いて最新情報を取得する
-  Delayer.new do
-    twitter = Enumerator.new{|y|
-      Plugin.filtering(:worlds, y)
-    }.find{|world|
-      world.class.slug == :twitter
-    }
-    if twitter
-      (twitter/:help/:configuration).json(cache: true).next do |configuration|
-        @twitter_configuration = configuration.symbolize
+  # Delayer.new do
+  #   twitter = Enumerator.new{|y|
+  #     Plugin.filtering(:worlds, y)
+  #   }.find{|world|
+  #     world.class.slug == :twitter
+  #   }
+  #   if twitter
+  #     (twitter/:help/:configuration).json(cache: true).next do |configuration|
+  #       @twitter_configuration = configuration.symbolize
+  #     end
+  #   end
+  # end
+
+  generate :extract_receive_message, :twitter_appear_tweets do |stream|
+    subscribe(:twitter_appear_tweets, &stream.method(:bulk_add))
+  end
+
+  subscribe(:twitter_appear_tweets).each do |tweet|
+    tweet.retweet? and Plugin.call(:share, tweet.user, tweet.retweet_ancestor)
+    # tweet.to_me? and Plugin.call(:mention, world, [tweet])
+  end
+
+  collection :message_stream do |collector|
+    collector << Stream.all
+
+    subscribe :twitter_worlds__add do |worlds|
+      collector.rewind do |a|
+        a | worlds.map(&:idname).map(&Stream.method(:friends))
+      end
+      worlds.each do |world|
+        world.twitter.lists.next do |lists|
+          stream.rewind do |a|
+            a | lists.map { |list| Stream.list world.idname, list.id }
+          end
+        end
       end
     end
+  end
+
+  collection :twitter_worlds do |collector|
+    subscribe(:worlds__add)
+      .select { |world| world.class.slug == :twitter }
+      .each(&collector.method(:add))
+
+    subscribe(:worlds__delete).each(&collector.method(:delete))
   end
 
   # Serviceと、Messageの配列を受け取り、一度以上受け取ったことのあるものを除外して返すフィルタを作成して返す。
@@ -292,12 +334,6 @@ Plugin.create(:twitter) do
         if source
           Plugin.call(:retweet_destroyed, source, message.user, message[:id])
           source.retweeted_sources.delete(message) end end } end
-
-  onappear do |messages|
-    messages.select(&:retweet?).each do |message|
-      Plugin.call(:share, message.user, message.retweet_ancestor)
-    end
-  end
 
   # 同じツイートに対するfavoriteイベントは一度しか発生させない
   filter_favorite do |service, user, message|
@@ -589,6 +625,10 @@ Plugin.create(:twitter) do
     nil
   end
 
+  on_world_create do |world|
+    world.class.slug != :twitter and next
+  end
+
   world_setting :twitter, _('Twitter') do
     ck, cs = UserConfig[:twitter_ck], UserConfig[:twitter_cs]
     token, secret = nil, nil
@@ -636,5 +676,56 @@ Plugin.create(:twitter) do
     link world.user_obj
 
     world
+  end
+
+  Deferred.new do
+    # fetch user timeline
+    collect(:twitter_worlds).each do |world|
+      world.twitter.user_timeline.trap { |err| error err }
+    end
+
+    last_fetch = %i[friends_timeline replies lists]
+      .map { |slug| [slug, Time.now] }.to_h
+
+    while true
+      collect(:twitter_worlds).each do |world|
+        datasource_slug = Stream.friends(world.idname).datasource_slug
+        generate :extract_receive_message, datasource_slug do |stream|
+          period = UserConfig[:twitter_retrieve_period_friends]
+          next if Time.now < last_fetch[:friends_timeline] + period
+
+          world.twitter.friends_timeline
+            .next(&stream.method(:bulk_add))
+            .trap { |err| error err }
+            .next { last_fetch[:friends_timeline] = Time.now }
+        end
+
+        period = UserConfig[:twitter_retrieve_period_replies]
+        if Time.now > last_fetch[:replies] + period
+          world.twitter.replies
+            .trap { |err| error err }
+            .next { last_fetch[:replies] = Time.now }
+        end
+
+        world.twitter.lists.next do |lists|
+          lists.each do |list|
+            datasource_slug = Stream.list(world.idname, list.id).datasource_slug
+            generate :extract_receive_message, datasource_slug do |stream|
+              period = UserConfig[:twitter_retrieve_period_lists]
+              next if Time.now < last_fetch[:lists] + period
+
+              notice "start #{list.id}"
+              world.twitter.list_statuses(id: list.id, public: list.public?)
+                .next(&stream.method(:bulk_add))
+                .trap { |err| error err }
+                .next { notice "end #{list.id}" }
+                .next { last_fetch[:lists] = Time.now }
+            end
+          end
+        end.trap { |err| error err }
+      end
+
+      +(Deferred.sleep 15)
+    end
   end
 end

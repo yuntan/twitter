@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
+# frozen_string_literal: true
 
 module Plugin::Twitter
   class World < Diva::Model
     extend Gem::Deprecate
 
-    register :twitter, name: "Twitterアカウント"
+    register :twitter, name: Plugin[:twitter]._('Twitterアカウント')
 
     field.string :id, required: true
     field.string :slug, required: true
@@ -29,15 +29,15 @@ module Plugin::Twitter
     end
 
     # 自分のUserを返す。初回はサービスに問い合せてそれを返す。
-    def user_obj
-      self[:user] end
-    alias to_user user_obj
+    def user
+      self[:user]
+    end
+    alias user_obj user
+    alias to_user user
 
     # 自分のユーザ名を返す。初回はサービスに問い合せてそれを返す。
     def idname
       self[:user].idname end
-    alias :user :idname
-    deprecate :user, "user_obj.idname", 2018, 05
 
     def icon
       user_obj.icon
@@ -56,6 +56,10 @@ module Plugin::Twitter
 
     def path
       "/#{slug}"
+    end
+
+    def friends_timeline
+      @friends_timeline ||= Stream.friends self
     end
 
     # サービスにクエリ _kind_ を投げる。
