@@ -670,7 +670,8 @@ Plugin.create(:twitter) do
       end
     end
 
-    world = pt::World.new ck: ck, cs: cs, token: token, secret: secret
+    user = +(twitter/:account/:verify_credentials).user
+    world = pt::World.new ck: ck, cs: cs, token: token, secret: secret, user: user
 
     label _("このアカウントでログインしますか？")
     link world.user_obj

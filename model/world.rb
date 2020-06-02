@@ -13,10 +13,12 @@ module Plugin::Twitter
     field.string :cs, required: true
     field.string :token, required: true
     field.string :secret, required: true
+    field.has :user, User, required: true
+    alias user_obj user
+    alias to_user user
 
     def initialize(hash)
       super(hash)
-      user_initialize
     end
 
     def twitter
@@ -28,14 +30,6 @@ module Plugin::Twitter
       end
     end
 
-    # 自分のUserを返す。初回はサービスに問い合せてそれを返す。
-    def user
-      self[:user]
-    end
-    alias user_obj user
-    alias to_user user
-
-    # 自分のユーザ名を返す。初回はサービスに問い合せてそれを返す。
     def idname
       self[:user].idname end
 
@@ -44,51 +38,11 @@ module Plugin::Twitter
     end
 
     def title
-      user_obj.title
-    end
-
-    def to_hash
-      super.merge(user: {id: user_obj.id,
-                         idname: user_obj.idname,
-                         name: user_obj.name,
-                         profile_image_url: user_obj.icon.perma_link.to_s})
+      user.title
     end
 
     def path
       "/#{slug}"
-    end
-
-    def friends_timeline
-      @friends_timeline ||= Stream.friends self
-    end
-
-    # サービスにクエリ _kind_ を投げる。
-    # レスポンスを受け取るまでブロッキングする。
-    # レスポンスを返す。失敗した場合は、apifailイベントを発生させてnilを返す。
-    # 0.1: このメソッドはObsoleteです
-    def scan(kind=:friends_timeline, args={})
-      no_mainthread
-      wait = Queue.new
-      __send__(kind, args).next{ |res|
-        wait.push res
-      }.terminate.trap{
-        wait.push nil
-      }
-      wait.pop
-    end
-
-    # scanと同じだが、別スレッドで問い合わせをするのでブロッキングしない。
-    # レスポンスが帰ってきたら、渡されたブロックが呼ばれる。
-    # ブロックは、必ずメインスレッドで実行されることが保証されている。
-    # Deferredを返す。
-    # 0.1: このメソッドはObsoleteです
-    def call_api(api, args = {}, &block)
-      __send__(api, args).next(&block)
-    end
-
-    # Streaming APIに接続する
-    def streaming(method = :userstream, *args, &proc)
-      twitter.__send__(method, *args, &proc)
     end
 
     # なんかコールバック機能つける
