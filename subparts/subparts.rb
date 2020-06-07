@@ -1,14 +1,17 @@
 # frozen_string_literal: true
 
+require_relative 'quote'
+require_relative 'reply'
 require_relative 'favorite'
 require_relative 'retweet'
 
 Plugin.create :twitter do
+  psp = Plugin::SubpartsPhoto
   pt = Plugin::Twitter
 
   filter_subparts_widgets do |message, yielder|
     message.class == Plugin::Twitter::Message or next [message, yielder]
-    [pt::Favorite, pt::Retweet].each do |klass|
+    [pt::Quote, psp::Photo, pt::Reply, pt::Favorite, pt::Retweet].each do |klass|
       yielder << klass.new(message)
     end
     [message, yielder]
