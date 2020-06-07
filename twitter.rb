@@ -3,6 +3,7 @@
 module Plugin::Twitter; end
 
 require_relative 'model/model'
+require_relative 'subparts/subparts'
 require_relative 'mikutwitter/mikutwitter'
 require_relative 'oauth/oauth'
 require_relative 'service'
@@ -446,7 +447,7 @@ Plugin.create(:twitter) do
           photo ||= Enumerator.new{|y| Plugin.filtering(:photo_filter, media[:media_url_https], y) }.first
           if photo
             Diva::Model(:score_hyperlink).new(
-              description: photo.uri,
+              description: '',
               uri: photo.uri,
               reference: photo)
           else
