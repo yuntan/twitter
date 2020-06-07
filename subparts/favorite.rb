@@ -7,10 +7,14 @@ module Plugin::Twitter
     end
 
     def initialize(model)
-      super
+      @model = model
+
+      super()
 
       self.class.instances[model.uri] = self
     end
+
+    attr_reader :model
 
     def icon
       ::Skin[:unfav]
@@ -20,8 +24,8 @@ module Plugin::Twitter
       model.favorite_count
     end
 
-    def voters
-      model.favorited_by
+    def voters_d
+      model.favorited_by_d
     end
   end
 end
