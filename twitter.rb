@@ -43,14 +43,14 @@ Plugin.create(:twitter) do
 
     subscribe :twitter_worlds__add do |worlds|
       collector.rewind do |a|
-        a | worlds.map(&:idname).map(&Stream.method(:friends))
+        a | worlds.map(&Stream.method(:friends))
       end
       worlds.each do |world|
         world.twitter.lists.next do |lists|
-          stream.rewind do |a|
-            a | lists.map { |list| Stream.list world.idname, list.id }
+          collector.rewind do |a|
+            a | lists.map { |list| Stream.list world, list }
           end
-        end
+        end.trap { error err }
       end
     end
   end

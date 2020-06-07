@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-UserConfig[:twitter_retrieve_period_friends] ||= 15 # seconds
-UserConfig[:twitter_retrieve_period_replies] ||= 30 # seconds
-UserConfig[:twitter_retrieve_period_lists] ||= 15 # seconds
+UserConfig[:twitter_retrieve_interval_friends] ||= 15 # seconds
+UserConfig[:twitter_retrieve_interval_replies] ||= 30 # seconds
+UserConfig[:twitter_retrieve_interval_lists] ||= 15 # seconds
 
 Plugin.create :twitter do
   settings _('Twitter') do
@@ -14,13 +14,13 @@ Plugin.create :twitter do
 
     settings _('更新間隔') do
       adjustment _('ホームタイムライン（秒）'),
-                 :twitter_retrieve_period_friends,
+                 :twitter_retrieve_interval_friends,
                  5, 60
       adjustment _('メンション（秒）'),
-                 :twitter_retrieve_period_replies,
+                 :twitter_retrieve_interval_replies,
                  12, 60
       adjustment _('リスト（秒）'),
-                 :twitter_retrieve_period_lists,
+                 :twitter_retrieve_interval_lists,
                  1, 60
     end
   end

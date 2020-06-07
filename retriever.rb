@@ -5,51 +5,58 @@ Plugin.create :twitter do
       world.twitter.user_timeline.trap { |err| error err }
     end
 
-    last_fetch = %i[friends_timeline replies lists]
-      .map { |slug| [slug, Time.now] }.to_h
+    last_fetch = {}
 
     while true
       collect(:twitter_worlds).each do |world|
         # fetch home timeline periodically
-        datasource_slug = Stream.friends(world.idname).datasource_slug
-        generate :extract_receive_message, datasource_slug do |stream|
-          period = UserConfig[:twitter_retrieve_period_friends]
-          next if Time.now < last_fetch[:friends_timeline] + period
-
-          world.twitter.friends_timeline
-            .next(&stream.method(:bulk_add))
-            .trap { |err| error err }
-            .next { last_fetch[:friends_timeline] = Time.now }
+        slug = Stream.friends(world).datasource_slug
+        interval = UserConfig[:twitter_retrieve_interval_friends]
+        unless last_fetch[slug] && Time.now < last_fetch[slug] + interval
+          generate :extract_receive_message, slug do |stream|
+            world.twitter.friends_timeline
+              .next(&stream.method(:bulk_add))
+              .trap { |err| error err }
+              .next { last_fetch[slug] = Time.now }
+          end
         end
 
         # fetch replies periodically
-        period = UserConfig[:twitter_retrieve_period_replies]
-        if Time.now > last_fetch[:replies] + period
+        slug = :"#{world.slug}-replies"
+        interval = UserConfig[:twitter_retrieve_interval_replies]
+        unless last_fetch[slug] && Time.now < last_fetch[slug] + interval
           world.twitter.replies
             .trap { |err| error err }
-            .next { last_fetch[:replies] = Time.now }
+            .next { last_fetch[slug] = Time.now }
         end
 
         # fetch lists periodically
-        world.twitter.lists(user: world.user).next do |lists|
-          lists.each do |list|
-            datasource_slug = Stream.list(world.idname, list.id).datasource_slug
-            generate :extract_receive_message, datasource_slug do |stream|
-              period = UserConfig[:twitter_retrieve_period_lists]
-              next if Time.now < last_fetch[:lists] + period
-
-              notice "start #{list.id}"
-              world.twitter.list_statuses(id: list.id, public: list.public?)
+        interval = UserConfig[:twitter_retrieve_interval_lists]
+        extract_lists.each do |slug, a|
+          unless last_fetch[slug] && Time.now < last_fetch[slug] + interval
+            generate :extract_receive_message, slug do |stream|
+              idname, list_id = a
+              idname == world.idname or next
+              world.twitter.list_statuses(id: list_id)
                 .next(&stream.method(:bulk_add))
                 .trap { |err| error err }
-                .next { notice "end #{list.id}" }
-                .next { last_fetch[:lists] = Time.now }
+                .next { last_fetch[slug] = Time.now }
             end
           end
-        end.trap { |err| error err }
+        end
       end
 
       +(Deferred.sleep 15)
+    end
+  end.trap { |err| error err }
+
+
+  def extract_lists
+    Plugin.filtering(:active_datasources, Set.new).last.reduce({}) do |h, slug|
+      if slug.to_s =~ /^twitter-([a-zA-Z0-9_]+)-list-(\d+)$/
+        h[slug] = [$1, $2.to_i]
+      end
+      h
     end
   end
 end
