@@ -183,9 +183,9 @@ class Plugin::Twitter::User < Diva::Model
       if !result and policy == Diva::DataSource::USE_ALL
         if id.is_a? Enumerable
           id.each_slice(100).map{|id_list|
-            Service.primary.scan(:user_lookup, id: id_list.join(','.freeze)) || [] }.flatten
+            Service.primary.twitter.user_lookup(id: id_list.join(','.freeze)) || [] }.flatten
         else
-          Service.primary.scan(:user_show, id: id) end
+          Service.primary.twitter.user_show(id: id) end
       else
         result end end
 
@@ -193,7 +193,7 @@ class Plugin::Twitter::User < Diva::Model
       if @idnames[idname.to_s]
         @idnames[idname.to_s]
       elsif policy == Diva::DataSource::USE_ALL
-        Service.primary.scan(:user_show, screen_name: idname)
+        Service.primary.user_show(screen_name: idname)
       end
     end
 

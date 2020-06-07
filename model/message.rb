@@ -774,7 +774,7 @@ class Plugin::Twitter::Message < Diva::Model
           }.find{|world|
             world.class.slug == :twitter
           }
-          twitter.scan(:status_show, id: id) if twitter
+          twitter.status_show(id: id) if twitter
         end
       end
     rescue Exception => err
