@@ -53,7 +53,7 @@ class Plugin::Twitter::Message < Diva::Model
   field.int    :in_reply_to_user_id                 # リプライ先ユーザID
   field.has    :receiver, Plugin::Twitter::User     # Send to user
   field.int    :in_reply_to_status_id               # リプライ先ツイートID
-  field.has    :replyto, Plugin::Twitter::Message   # Reply to this message
+  # field.has    :replyto, Plugin::Twitter::Message   # Reply to this message
   field.has    :retweet, Plugin::Twitter::Message   # ReTweet to this message
   field.string :source                              # using client
   field.bool   :exact                               # true if complete data
@@ -63,6 +63,7 @@ class Plugin::Twitter::Message < Diva::Model
   field.int    :reply_count
   field.int    :retweet_count
   field.int    :favorite_count
+  field.int    :quoted_status_id
 
   handle PermalinkMatcher do |uri|
     match = PermalinkMatcher.match(uri.to_s)
@@ -95,9 +96,8 @@ class Plugin::Twitter::Message < Diva::Model
     if not(value[:image].is_a?(Plugin::Twitter::Message::Image)) and value[:image]
       value[:image] = Plugin::Twitter::Message::Image.new(value[:image]) end
     super(value)
-    self[:replyto].add_child(self) if self[:replyto].is_a?(Plugin::Twitter::Message)
+    # self[:replyto].add_child(self) if self[:replyto].is_a?(Plugin::Twitter::Message)
     self[:retweet].add_child(self) if self[:retweet].is_a?(Plugin::Twitter::Message)
-    # Plugin::Twitter::Message.appear(self)
 
     Plugin.call(:twitter_appear_tweets, [self])
   end
@@ -269,50 +269,27 @@ class Plugin::Twitter::Message < Diva::Model
   # falseならサーバに問い合わせずに結果を返す。
   # Messageのインスタンスかnilを返す。
   def receive_message(force_retrieve=false)
-    replyto_source(force_retrieve) or retweet_source(force_retrieve) end
+    @in_reply_to_status or retweet_source(force_retrieve) end
 
   def receive_message_d(force_retrieve=false)
     Thread.new{ receive_message(force_retrieve) } end
 
   # このMessageの宛先になっているMessageを取得して返す。
-  # ==== Args
-  # [force_retrieve] 真なら、ツイートがメモリ上に見つからなかった場合Twitter APIリクエストを発行する
-  # ==== Return
-  # Message|nil 宛先のMessage。宛先がなければnil
-  def replyto_source(force_retrieve=false)
-    if reply?
-      if self[:replyto]
-        self[:replyto]
-      elsif self[:in_reply_to_status_id]
-        result = Plugin::Twitter::Message.findbyid(self[:in_reply_to_status_id], force_retrieve ? Diva::DataSource::USE_ALL : Diva::DataSource::USE_LOCAL_ONLY)
-        if result.is_a?(Plugin::Twitter::Message)
-          result.add_child(self) unless result.children.include?(self)
-          result
-        end
-      end
+  def in_reply_to_status_d
+    Deferred.new do
+      next unless in_reply_to_status_id
+      # next replyto if replyto
+      next @in_reply_to_status if defined? @in_reply_to_status
+
+      twitter = Plugin.collect(:twitter_worlds).first.twitter
+      @in_reply_to_status = +twitter.status_show(id: in_reply_to_status_id)
+      @in_reply_to_status.add_child self
+      @in_reply_to_status
     end
   end
 
-  # replyto_source の戻り値をnextに渡すDeferredableを返す
-  # ==== Args
-  # [force_retrieve] 真なら、ツイートがメモリ上に見つからなかった場合Twitter APIリクエストを発行する
-  # ==== Return
-  # Deferredable nextの引数に宛先のMessageを渡す。宛先が無い場合は失敗し、trap{}にnilを渡す
-  def replyto_source_d(force_retrieve=true)
-    promise = Delayer::Deferred.new(true)
-    Thread.new do
-      begin
-        result = replyto_source(force_retrieve)
-        if result.is_a? Plugin::Twitter::Message
-          promise.call(result)
-        else
-          promise.fail(result)
-        end
-      rescue Exception => err
-        promise.fail(err)
-      end
-    end
-    promise
+  def replyto_source_d(_)
+    in_reply_to_status_d
   end
 
   # このMessageがリツイートであるなら、リツイート元のツイートを返す。
@@ -356,59 +333,25 @@ class Plugin::Twitter::Message < Diva::Model
     promise
   end
 
-  # このMessageが引用した投稿を全て返す
-  # ==== Return
-  # Enumerable このMessageが引用したMessageのid(Fixnum)
-  def quoting_ids
-    entity.lazy.select{ |entity|
-      :urls == entity[:slug]
-    }.map{ |entity|
-      PermalinkMatcher.match(entity[:expanded_url])
-    }.select(&ret_nth).map do |matched|
-      matched[:id].to_i end end
+  # このMessageが引用した投稿を返す。
+  def quoted_status_d
+    Deferred.new do
+      next unless quoted_status_id
+      next @quoted_status if defined? @quoted_status
 
-  # このMessageが引用した投稿を全て返す。
-  # _force_retrieve_ に真が指定されたらこのメソッドはTwitter APIをリクエストする可能性がある。
-  # そのため _force_retrieve_ が真なら、Messageを取得してから返し、
-  # 偽ならAPIリクエストが必要ないので、Messageオブジェクトの取得を遅延する。
-  # Twitter APIリクエストを行ったがツイートが削除されていた、メモリ上に存在しないなどの理由で
-  # 取得できなかったツイートに関しては、戻り値に含まれない
-  # ==== Args
-  # [force_retrieve] 真なら、ツイートがメモリ上に見つからなかった場合Twitter APIリクエストを発行する
-  # ==== Return
-  # Enumerable このMessageが引用したMessage
-  def quoting_messages(force_retrieve=false)
-    return @quoting_messages if defined? @quoting_messages
-    if force_retrieve
-      @quoting_messages ||= quoting_ids.map{|quoted_id|
-        Plugin::Twitter::Message.findbyid(quoted_id, -1)
-      }.to_a.compact.freeze.tap do |qs|
-        qs.each do |q|
-          q.add_quoted_by(self)
-        end
-      end
-    else
-      quoting_ids.map{|quoted_id|
-        Plugin::Twitter::Message.findbyid(quoted_id, 0) }.select(&ret_nth)
+      twitter = Plugin.collect(:twitter_worlds).first.twitter
+      @quoted_status = +twitter.status_show(id: quoted_status_id)
+      # @quoted_status&.add_quoted_by self
+      @quoted_status
     end
   end
-
-  # このMessageが引用した投稿を全て返す。
-  # _force_retrieve_ に真が指定されたらこのメソッドはTwitter APIをリクエストする可能性がある。
-  # Twitter APIリクエストを行ったがツイートが削除されていた、メモリ上に存在しないなどの理由で
-  # 取得できなかったツイートに関しては、結果がnilとなる
-  # ==== Args
-  # [force_retrieve] 真なら、ツイートがメモリ上に見つからなかった場合Twitter APIリクエストを発行する
-  # ==== Return
-  # Deferredable
-  def quoting_messages_d(force_retrieve=false)
-    Thread.new{ quoting_messages(force_retrieve) } end
 
   # self が、何らかのツイートを引用しているなら真を返す
   # ==== Return
   # TrueClass|FalseClass
   def quoting?
-    !!quoting_ids.first end
+    !!quoted_status_id
+  end
 
   # selfを引用している _Diva::Model_ を登録する
   # ==== Args
@@ -574,7 +517,7 @@ class Plugin::Twitter::Message < Diva::Model
   def children_all
     children.inject(Diva::Model.container_class.new([self])){ |result, item| result.concat item.children_all } end
 
-  def favorited_by
+  def favorited_by_d
     arr = Plugin.filtering(:favorited_by, self, [])[1]
 
     Deferred.new do
@@ -595,7 +538,7 @@ class Plugin::Twitter::Message < Diva::Model
   # この投稿をリツイートしたユーザを返す
   # ==== Return
   # Enumerable リツイートしたユーザを、リツイートした順番に返す
-  def retweeted_by
+  def retweeted_by_d
     has_status_user_ids = Set.new(retweeted_statuses.map(&:user).map(&:id))
     arr = retweeted_sources.lazy.reject{|r|
       r.class.slug == :twitter_user and has_status_user_ids.include?(r.id)
