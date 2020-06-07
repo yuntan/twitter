@@ -59,6 +59,10 @@ class Plugin::Twitter::Message < Diva::Model
   field.bool   :exact                               # true if complete data
   field.time   :created                             # posted time
   field.time   :modified                            # updated time
+  field.int    :quote_count
+  field.int    :reply_count
+  field.int    :retweet_count
+  field.int    :favorite_count
 
   handle PermalinkMatcher do |uri|
     match = PermalinkMatcher.match(uri.to_s)
@@ -570,9 +574,13 @@ class Plugin::Twitter::Message < Diva::Model
   def children_all
     children.inject(Diva::Model.container_class.new([self])){ |result, item| result.concat item.children_all } end
 
-  # この投稿をお気に入りに登録したUserをSetオブジェクトにまとめて返す。
   def favorited_by
-    @favorited ||= Plugin.filtering(:favorited_by, self, Set.new())[1] end
+    arr = Plugin.filtering(:favorited_by, self, [])[1]
+
+    Deferred.new do
+      (arr + (+Service.primary.twitter.favorited_by(id: id))).uniq
+    end
+  end
 
   # この投稿を「自分」がふぁぼっていれば真
   def favorited_by_me?(me = Service.services)
@@ -589,10 +597,14 @@ class Plugin::Twitter::Message < Diva::Model
   # Enumerable リツイートしたユーザを、リツイートした順番に返す
   def retweeted_by
     has_status_user_ids = Set.new(retweeted_statuses.map(&:user).map(&:id))
-    retweeted_sources.lazy.reject{|r|
+    arr = retweeted_sources.lazy.reject{|r|
       r.class.slug == :twitter_user and has_status_user_ids.include?(r.id)
-    }.map(&:user) end
-  alias retweeted_users retweeted_by
+    }.map(&:user)
+
+    Deferred.new do
+      (arr.to_a + (+Service.primary.twitter.retweeted_by(id: id))).uniq
+    end
+  end
 
   # この投稿に対するリツイートを返す
   def retweeted_statuses
