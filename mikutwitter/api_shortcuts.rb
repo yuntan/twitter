@@ -46,6 +46,10 @@ module MikuTwitter::APIShortcuts
 
   defshortcut :retweets_of_me, "statuses/retweets_of_me", :messages
 
+  defshortcut :favorited_by, 'statuses/favorited_by', :by_users
+
+  defshortcut :retweeted_by, 'statuses/retweeted_by', :by_users
+
   defshortcut :friendship, 'friendships/show', :friendship
 
   defcursorpager :friends_id, 'friends/ids', :paged_ids, :ids, id: :user_id

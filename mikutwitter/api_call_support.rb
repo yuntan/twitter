@@ -79,6 +79,7 @@ module MikuTwitter::ApiCallSupport
     defparser :list
     defparser :id
     defparser :direct_message
+    defparser :by_users
 
     def friendship(options = {})
       type_strict options => Hash
@@ -198,6 +199,9 @@ module MikuTwitter::ApiCallSupport
       def id(id)
         id end
 
+      def by_users(arr)
+        arr.first[1].map { |h| user h }
+      end
     end
 
   end
